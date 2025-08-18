@@ -70,4 +70,50 @@ plt.savefig(PROCESSED_DIR / 'correlation_matrix_all_cols.png')
 plt.close()
 log("Matrice di correlazione salvata.")
 
+# ANALISI DISTRIBUZIONI NUMERICHE
+log("Plot distribuzioni variabili numeriche (prime 10)...")
+num_cols = df.select_dtypes(include=[np.number]).columns
+for col in num_cols[:10]:  # limita alle prime 10 per non generare troppi grafici
+    plt.figure(figsize=(6,4))
+    # Istogramma + curva KDE per vedere la forma della distribuzione
+    sns.histplot(df[col].dropna(), kde=True, bins=30)
+    plt.title(f"Distribuzione variabile numerica: {col}")
+    plt.xlabel(col)
+    plt.ylabel("Frequenza")
+    plt.tight_layout()
+    plt.savefig(PROCESSED_DIR / f"dist_num_{col}.png")
+    plt.close()
+log("Distribuzioni numeriche salvate.")
+
+# ANALISI DISTRIBUZIONI CATEGORICHE
+log("Plot distribuzioni variabili categoriche (prime 10)...")
+cat_cols = df.select_dtypes(include=['object']).columns
+for col in cat_cols[:10]:  # prime 10 categoriche
+    plt.figure(figsize=(8,4))
+    # Grafico a barre delle categorie più frequenti (max 20 per leggibilità)
+    df[col].value_counts(dropna=False).head(20).plot(kind="bar", color="skyblue")
+    plt.title(f"Distribuzione variabile categorica: {col}")
+    plt.xlabel(col)
+    plt.ylabel("Conteggio")
+    plt.tight_layout()
+    plt.savefig(PROCESSED_DIR / f"dist_cat_{col}.png")
+    plt.close()
+log("Distribuzioni categoriche salvate.")
+
+# ANALISI RELAZIONE TRA VARIABILI E TARGET
+if 'sii' in df.columns:
+    log("Analisi variabili numeriche rispetto al target 'sii'...")
+    for col in num_cols[:5]:  # prime 5 variabili numeriche
+        plt.figure(figsize=(6,4))
+        # Boxplot: distribuzione della variabile numerica divisa per classe target
+        sns.boxplot(x='sii', y=col, data=df, palette="Set2")
+        plt.title(f"{col} rispetto al target 'sii'")
+        plt.xlabel("Classe target (sii)")
+        plt.ylabel(col)
+        plt.tight_layout()
+        plt.savefig(PROCESSED_DIR / f"{col}_vs_target.png")
+        plt.close()
+    log("Analisi numeriche rispetto al target salvata.")
+
+
 log(f"Analisi COMPLETA su tutte le colonne terminata! Output in: {PROCESSED_DIR}")
