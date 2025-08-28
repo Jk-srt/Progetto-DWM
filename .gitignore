@@ -1,0 +1,44 @@
+# Data & artifacts
+/data/raw/*.zip
+/data/raw/*.csv
+!data/raw/README.md
+
+# Specific large dataset file
+Progetto-DWM/child-mind-institute-problematic-internet-use.zip
+child-mind-institute-problematic-internet-use.zip
+
+# Processed artifacts
+/data/processed/*.png
+/data/processed/*.csv
+/data/processed/*.json
+!data/processed/train_clean.csv
+
+# Models
+/models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.env
+.venv
+venv/
+.env*/
+
+# Jupyter / notebooks caches
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary
+/tmp/
