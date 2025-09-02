@@ -11,6 +11,9 @@ import warnings
 import os
 import numpy as np
 import pandas as pd
+import matplotlib
+# Force non-interactive backend to avoid Tkinter thread errors during parallel CV
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import json
 
@@ -47,7 +50,10 @@ RAW_DIR = PROJECT_ROOT / "data/raw"
 # Performance / debug flags via environment variables
 FAST_MODE = os.environ.get("FAST_MODE", "0") == "1"  # simplify searches & computations
 SKIP_LGBM = os.environ.get("SKIP_LGBM", "0") == "1"  # skip LightGBM entirely
-print(f"[CONFIG] FAST_MODE={FAST_MODE} SKIP_LGBM={SKIP_LGBM}")
+SKIP_PERM = os.environ.get("SKIP_PERM", "0") == "1"   # skip permutation importance (slow / debug)
+AUTO_DROP_PURITY = os.environ.get("AUTO_DROP_PURITY", "1") == "1"  # auto-drop high-purity (leak-like) features
+PURITY_THRESHOLD = float(os.environ.get("PURITY_THRESHOLD", "0.995"))
+print(f"[CONFIG] FAST_MODE={FAST_MODE} SKIP_LGBM={SKIP_LGBM} SKIP_PERM={SKIP_PERM} AUTO_DROP_PURITY={AUTO_DROP_PURITY} PURITY_THRESHOLD={PURITY_THRESHOLD}")
 
 
 def _load_processed_df() -> pd.DataFrame:
@@ -113,6 +119,35 @@ def _evaluate_cv(model: Pipeline, X: pd.DataFrame, y: pd.Series, cv: StratifiedK
         "average_precision_macro": float(pr_auc) if np.isfinite(pr_auc) else None,
     }
     return summary
+
+
+def _scan_leakage_like_signals(X: pd.DataFrame, y: pd.Series, purity_threshold: float = 0.995):
+    """Heuristic scan for columns that may encode target almost perfectly.
+
+    For each feature, measures conditional purity: proportion of groups (feature values) that map to a single target.
+    Flags: high average purity or many singleton groups matching single class.
+    """
+    suspicious = []
+    y_np = y.values
+    for col in X.columns[:200]:  # limit for speed
+        vc = X[col].value_counts(dropna=False)
+        if vc.max() == 1 and len(vc) == len(X):
+            # Completely unique column (ID-like)
+            suspicious.append((col, 'all_unique', 1.0))
+            continue
+        # Compute purity: for each feature value the dominant class proportion
+        grp = pd.DataFrame({'feat': X[col], 'y': y_np})
+        purity_vals = grp.groupby('feat')['y'].agg(lambda s: s.value_counts(normalize=True).iloc[0])
+        mean_purity = purity_vals.mean()
+        if mean_purity >= purity_threshold:
+            suspicious.append((col, 'mean_purity', float(mean_purity)))
+    if suspicious:
+        print("[LEAK-CHECK] Potential high-purity features (col, reason, score):")
+        for tup in suspicious[:15]:
+            print("  ", tup)
+    else:
+        print("[LEAK-CHECK] No obvious high-purity single-feature signals above threshold.")
+    return suspicious
 
 
 def _plot_feature_importances(importances, names, title, out_png):
@@ -197,6 +232,17 @@ def _export_submission(best_model, X_full, y_full, id_full, best_name: str):
         print("[SUB] Colonna 'id' mancante nel test, impossibile creare submission.")
         return
     X_test_pred = test_df.drop(columns=[c for c in ['id','sii'] if c in test_df.columns])
+    # Align columns: ensure all training features present (add NaN), drop extras
+    train_cols = list(X_full.columns)
+    for col in train_cols:
+        if col not in X_test_pred.columns:
+            X_test_pred[col] = np.nan
+    # Drop any extras not used in training
+    extra = [c for c in X_test_pred.columns if c not in train_cols]
+    if extra:
+        X_test_pred = X_test_pred.drop(columns=extra)
+    # Reorder
+    X_test_pred = X_test_pred[train_cols]
     # Refit on full training set first for maximal performance
     print("[SUB] Re-fitting best model on ENTIRE training set prima della submission...")
     best_model.fit(X_full, y_full)
@@ -226,9 +272,22 @@ def main():
     assert "sii" in df.columns, "Colonna target 'sii' mancante nel dataset."
     id_series = df["id"] if "id" in df.columns else pd.Series(df.index, name="id")
 
-    # Features/target
+    # Features/target (initial)
     X = df.drop(columns=[c for c in ["sii", "id"] if c in df.columns])
     y = df["sii"]
+
+    # Early leakage-like scan BEFORE HPO
+    suspicious = _scan_leakage_like_signals(X, y, purity_threshold=PURITY_THRESHOLD)
+    if AUTO_DROP_PURITY and suspicious:
+        drop_cols = [c for c, reason, score in suspicious if score >= PURITY_THRESHOLD]
+        if drop_cols:
+            print(f"[LEAK-CHECK] Auto-dropping {len(drop_cols)} high-purity features: {drop_cols[:10]}{'...' if len(drop_cols)>10 else ''}")
+            X = X.drop(columns=drop_cols)
+        else:
+            print("[LEAK-CHECK] No columns meet auto-drop criteria.")
+    else:
+        if suspicious:
+            print("[LEAK-CHECK] AUTO_DROP_PURITY=0 -> keeping suspicious features (may cause perfect scores).")
 
     # Tipi di colonne
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
@@ -278,6 +337,9 @@ def main():
     print("[RF] Best params:", rf_search.best_params_)
     rf_cv = _evaluate_cv(rf_best, X, y, cv)
     print("[RF] CV:", rf_cv)
+    # Save RF CV metrics early
+    with open(DATA_DIR / "metrics_cv_RandomForest.json", 'w', encoding='utf-8') as f:
+        json.dump(rf_cv, f, indent=2)
 
     # 2) LightGBM (beyond scikit-learn) + HPO
     lgbm_best = None
@@ -320,6 +382,8 @@ def main():
         print("[LGBM] Best params:", lgbm_search.best_params_)
         lgbm_cv = _evaluate_cv(lgbm_best, X, y, cv)
         print("[LGBM] CV:", lgbm_cv)
+        with open(DATA_DIR / "metrics_cv_LightGBM.json", 'w', encoding='utf-8') as f:
+            json.dump(lgbm_cv, f, indent=2)
     except Exception as e:
         print("[LGBM] LightGBM non disponibile o saltato:", e)
 
@@ -339,6 +403,9 @@ def main():
         stratify=y,
         random_state=42,
     )
+    # (Optional) secondary scan on training fold (informational only)
+    _scan_leakage_like_signals(X_train, y_train, purity_threshold=PURITY_THRESHOLD)
+
     best_model.fit(X_train, y_train)
     y_pred = best_model.predict(X_test)
     print(classification_report(y_test, y_pred))
@@ -381,33 +448,36 @@ def main():
         print(f"[BEST] Salvati ROC/PR: {best_name}_curves_roc.png / _pr.png")
 
     # Permutation importance (computationally expensive - limit n_repeats)
-    try:
-        repeats = 3 if FAST_MODE else 5
-        print(f"[PERM] Calcolo permutation importance (n_repeats={repeats})...")
-        X_test_copy = X_test.copy()
-        perm = permutation_importance(best_model, X_test_copy, y_test, n_repeats=repeats, random_state=42, n_jobs=-1 if not FAST_MODE else 1)
-        # Need feature names again
-        prep = best_model.named_steps.get("prep")
-        feat_names = _get_feature_names(prep, num_cols, cat_cols)
-        perm_df = pd.DataFrame({
-            'feature': feat_names,
-            'perm_mean': perm.importances_mean,
-            'perm_std': perm.importances_std,
-        }).sort_values('perm_mean', ascending=False)
-        perm_df.to_csv(DATA_DIR / f"permutation_importance_{best_name}.csv", index=False)
-        _plot_feature_importances(perm_df['perm_mean'].values, perm_df['feature'].values,
-                                  f"Permutation Importance Top20 - {best_name}",
-                                  DATA_DIR / f"permutation_importance_{best_name}.png")
-        print(f"[PERM] Salvati permutation importance CSV/PNG")
-    except Exception as e:
-        print("[PERM] Skipped:", e)
+    if not SKIP_PERM:
         try:
-            print(f"[PERM-DEBUG] X_test shape={X_test.shape} y_test shape={y_test.shape}")
+            repeats = 3 if FAST_MODE else 5
+            print(f"[PERM] Calcolo permutation importance (n_repeats={repeats})...")
+            X_test_copy = X_test.copy()
+            perm = permutation_importance(best_model, X_test_copy, y_test, n_repeats=repeats, random_state=42, n_jobs=-1 if not FAST_MODE else 1)
+            # Need feature names again
             prep = best_model.named_steps.get("prep")
             feat_names = _get_feature_names(prep, num_cols, cat_cols)
-            print(f"[PERM-DEBUG] Expected feature count {len(feat_names)}")
-        except Exception as e2:
-            print("[PERM-DEBUG] Secondary failure:", e2)
+            perm_df = pd.DataFrame({
+                'feature': feat_names,
+                'perm_mean': perm.importances_mean,
+                'perm_std': perm.importances_std,
+            }).sort_values('perm_mean', ascending=False)
+            perm_df.to_csv(DATA_DIR / f"permutation_importance_{best_name}.csv", index=False)
+            _plot_feature_importances(perm_df['perm_mean'].values, perm_df['feature'].values,
+                                      f"Permutation Importance Top20 - {best_name}",
+                                      DATA_DIR / f"permutation_importance_{best_name}.png")
+            print(f"[PERM] Salvati permutation importance CSV/PNG")
+        except Exception as e:
+            print("[PERM] Skipped:", e)
+            try:
+                print(f"[PERM-DEBUG] X_test shape={X_test.shape} y_test shape={y_test.shape}")
+                prep = best_model.named_steps.get("prep")
+                feat_names = _get_feature_names(prep, num_cols, cat_cols)
+                print(f"[PERM-DEBUG] Expected feature count {len(feat_names)}")
+            except Exception as e2:
+                print("[PERM-DEBUG] Secondary failure:", e2)
+    else:
+        print("[PERM] Skipped by SKIP_PERM=1")
 
     # Feature importance (se disponibile)
     try:
