@@ -8,6 +8,12 @@
 - Colonne eliminate: (inserire elenco / count)
 - Rimozione automatica di 14 feature ad alta purezza (>=0.995) per evitare leakage; calo controllato delle metriche ma maggiore realismo.
 - Elenco feature ad alta purezza rimosse (documentare qui): `BIA-BIA_BMC, BIA-BIA_BMR, BIA-BIA_DEE, BIA-BIA_ECW, BIA-BIA_FFM, BIA-BIA_FFMI, BIA-BIA_FMI, BIA-BIA_Fat, BIA-BIA_ICW, BIA-BIA_LDM, BIA-BIA_LST, BIA-BIA_SMM, BIA-BIA_TBW, PCIAT-PCIAT_Total`.
+ - Tabella conteggio feature:
+	 | Stato | #Feature |
+	 |-------|----------|
+	 | Iniziale (train) |   |
+	 | Dopo drop manuale |   |
+	 | Dopo auto-drop high-purity |   |
 
 ## 2. Analisi Esplorativa (Sintesi)
 - Class distribution: (inserire counts / imbalance ratio)
@@ -36,6 +42,28 @@ Inserire tabella (CV mean ± std)
 
 - Modello selezionato: (nome) motivazione (miglior F1 Macro / trade-off)
 - Holdout: Accuracy = , F1 Macro = , Confusion Matrix = allegata
+
+### 4.1 Leakage Mitigation & Ablation
+Abbiamo confrontato quattro strategie di gestione feature sospette/leakage (incluso uno scenario di controllo con tutte le feature) su 5-fold CV.
+
+| Strategia | Modello | #Feat | #Drop | Acc mean | Acc std | F1 Macro mean | F1 Macro std |
+|-----------|---------|-------|-------|----------|---------|---------------|--------------|
+| D_all (nessun drop) | RandomForest | 80 | 0 | 0.9960 | 0.0027 | 0.9542 | 0.0309 |
+| D_all (nessun drop) | LightGBM | 80 | 0 | 0.9993 | 0.0009 | 0.9922 | 0.0096 |
+| C_high (soglia purezza alta) | RandomForest | 47 | 33 | 0.5983 | 0.0126 | 0.2806 | 0.0206 |
+| C_high (soglia purezza alta) | LightGBM | 47 | 33 | 0.5724 | 0.0188 | 0.3348 | 0.0200 |
+| B_min (drop minimo) | RandomForest | 45 | 35 | 0.6005 | 0.0077 | 0.2899 | 0.0135 |
+| B_min (drop minimo) | LightGBM | 45 | 35 | 0.5673 | 0.0201 | 0.3186 | 0.0158 |
+| A_full (strategia adottata) | RandomForest | 42 | 38 | 0.6042 | 0.0092 | 0.2973 | 0.0164 |
+| A_full (strategia adottata) | LightGBM | 42 | 38 | 0.5702 | 0.0266 | 0.3230 | 0.0213 |
+
+Osservazioni principali:
+1. Scenario D_all produce metriche quasi perfette (macro-F1 >0.95 / >0.99) non realistiche: forte indicazione di leakage (feature derivate o surrogate del target).
+2. Rimuovendo i blocchi sospetti (BIA-* e PCIAT_* + indici aggregati) le metriche crollano su valori plausibili (~0.28–0.33 Macro-F1) indicando valutazione più onesta.
+3. Le differenze tra strategie senza leakage (A_full, B_min, C_high) sono piccole; A_full massimizza lievemente F1 RF, mentre C_high massimizza lievemente F1 LGBM. A_full è scelta per criteri di dominio e semplicità (elimina interi gruppi ad alto rischio di codifica indiretta del target e mismatch con test).
+4. La riduzione di ~47% delle feature (80→42) elimina il segnale spurio mantenendo performance comparabili alle strategie alternative pulite.
+
+Motivazione scelta finale: privilegiare robustezza e prevenzione leakage rispetto a guadagno marginale di una singola configurazione modello.
 
 ## 5. Interpretabilità
 - Feature Importances (sintesi): prime 10

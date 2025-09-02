@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import json
+from datetime import datetime
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -51,9 +52,14 @@ RAW_DIR = PROJECT_ROOT / "data/raw"
 FAST_MODE = os.environ.get("FAST_MODE", "0") == "1"  # simplify searches & computations
 SKIP_LGBM = os.environ.get("SKIP_LGBM", "0") == "1"  # skip LightGBM entirely
 SKIP_PERM = os.environ.get("SKIP_PERM", "0") == "1"   # skip permutation importance (slow / debug)
-AUTO_DROP_PURITY = os.environ.get("AUTO_DROP_PURITY", "1") == "1"  # auto-drop high-purity (leak-like) features
+AUTO_DROP_PURITY = os.environ.get("AUTO_DROP_PURITY", "1") == "1"  # auto-drop high-purity (leak-like) features (post manual list)
 PURITY_THRESHOLD = float(os.environ.get("PURITY_THRESHOLD", "0.995"))
 print(f"[CONFIG] FAST_MODE={FAST_MODE} SKIP_LGBM={SKIP_LGBM} SKIP_PERM={SKIP_PERM} AUTO_DROP_PURITY={AUTO_DROP_PURITY} PURITY_THRESHOLD={PURITY_THRESHOLD}")
+
+# Fixed manual drop list (schema alignment + high-purity domain-derived constructs)
+FEATURE_DROP_PREFIXES = ["BIA-BIA_"]  # all BIA body composition metrics
+FEATURE_DROP_EXACT = ["PCIAT-PCIAT_Total", "PCIAT-Season"]
+FEATURE_DROP_PATTERNS = ["PCIAT-PCIAT_"]  # all individual PCIAT question items
 
 
 def _load_processed_df() -> pd.DataFrame:
@@ -273,21 +279,91 @@ def main():
     id_series = df["id"] if "id" in df.columns else pd.Series(df.index, name="id")
 
     # Features/target (initial)
-    X = df.drop(columns=[c for c in ["sii", "id"] if c in df.columns])
+    X_full_initial = df.drop(columns=[c for c in ["sii", "id"] if c in df.columns])
     y = df["sii"]
 
-    # Early leakage-like scan BEFORE HPO
+    # Load test (if present) to detect columns missing there
+    test_cols = None
+    test_candidates = [RAW_DIR / "test.csv", RAW_DIR / "test_clean.csv", DATA_DIR / "test_clean.csv"]
+    for p in test_candidates:
+        if p.exists():
+            try:
+                test_cols = pd.read_csv(p, nrows=5).columns.tolist()
+                break
+            except Exception:
+                pass
+
+    # Build manual drop set
+    def matches_patterns(col: str) -> bool:
+        if any(col.startswith(pref) for pref in FEATURE_DROP_PREFIXES):
+            return True
+        if col in FEATURE_DROP_EXACT:
+            return True
+        if any(col.startswith(pat) for pat in FEATURE_DROP_PATTERNS):
+            return True
+        return False
+
+    manual_drop = [c for c in X_full_initial.columns if matches_patterns(c)]
+
+    # Compute purity scores for manual drop features
+    purity_map = {}
+    if manual_drop:
+        tmp = pd.DataFrame({'y': y})
+        for col in manual_drop:
+            if col in X_full_initial.columns:
+                grp = pd.DataFrame({'feat': X_full_initial[col], 'y': y})
+                try:
+                    purity_vals = grp.groupby('feat')['y'].agg(lambda s: s.value_counts(normalize=True).iloc[0])
+                    purity_map[col] = float(purity_vals.mean())
+                except Exception:
+                    purity_map[col] = None
+
+    # Determine reason per feature
+    dropped_records = []
+    for col in manual_drop:
+        reason_parts = []
+        if any(col.startswith(pref) for pref in FEATURE_DROP_PREFIXES) or col in FEATURE_DROP_EXACT:
+            reason_parts.append('high_purity')
+        if any(col.startswith(pat) for pat in FEATURE_DROP_PATTERNS):
+            # If missing in test mark mismatch
+            if test_cols is not None and col not in test_cols:
+                reason_parts.append('missing_in_test')
+        reason = '+'.join(reason_parts) if reason_parts else 'manual'
+        dropped_records.append({'feature': col, 'reason': reason, 'purity_score': purity_map.get(col)})
+
+    # Apply manual drop
+    X = X_full_initial.drop(columns=manual_drop, errors='ignore')
+    print(f"[FEATURE-DROP] Manual drop list applied: {len(manual_drop)} features removed. Remaining: {X.shape[1]}")
+    # Save log CSV
+    if dropped_records:
+        pd.DataFrame(dropped_records).sort_values('feature').to_csv(DATA_DIR / 'high_purity_dropped.csv', index=False)
+        print("[FEATURE-DROP] Saved log high_purity_dropped.csv")
+
+    # Early leakage-like scan on remaining features BEFORE HPO (optional)
     suspicious = _scan_leakage_like_signals(X, y, purity_threshold=PURITY_THRESHOLD)
     if AUTO_DROP_PURITY and suspicious:
-        drop_cols = [c for c, reason, score in suspicious if score >= PURITY_THRESHOLD]
-        if drop_cols:
-            print(f"[LEAK-CHECK] Auto-dropping {len(drop_cols)} high-purity features: {drop_cols[:10]}{'...' if len(drop_cols)>10 else ''}")
-            X = X.drop(columns=drop_cols)
+        drop_cols_auto = [c for c, reason, score in suspicious if score >= PURITY_THRESHOLD]
+        if drop_cols_auto:
+            print(f"[LEAK-CHECK] Auto-dropping {len(drop_cols_auto)} additional high-purity features: {drop_cols_auto[:10]}{'...' if len(drop_cols_auto)>10 else ''}")
+            X = X.drop(columns=drop_cols_auto)
+            # append to log
+            add_logs = []
+            for col in drop_cols_auto:
+                add_logs.append({'feature': col, 'reason': 'auto_high_purity', 'purity_score': None})
+            if add_logs:
+                log_path = DATA_DIR / 'high_purity_dropped.csv'
+                try:
+                    existing = pd.read_csv(log_path)
+                    new_log = pd.concat([existing, pd.DataFrame(add_logs)], ignore_index=True)
+                except Exception:
+                    new_log = pd.DataFrame(add_logs)
+                new_log.to_csv(log_path, index=False)
+                print("[FEATURE-DROP] Updated log with auto-dropped features.")
         else:
-            print("[LEAK-CHECK] No columns meet auto-drop criteria.")
+            print("[LEAK-CHECK] No additional columns meet auto-drop criteria.")
     else:
         if suspicious:
-            print("[LEAK-CHECK] AUTO_DROP_PURITY=0 -> keeping suspicious features (may cause perfect scores).")
+            print("[LEAK-CHECK] AUTO_DROP_PURITY=0 -> keeping suspicious features (may cause residual leakage).")
 
     # Tipi di colonne
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
