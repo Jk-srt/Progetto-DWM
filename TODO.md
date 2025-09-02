@@ -13,7 +13,7 @@ P3 = Nice-to-have / opzionale
 ## P1 – Critici / Prima della relazione
 
 ### 1. Kaggle Submission
-- [ ] (P1) Aggiungere `data/raw/test.csv` (scaricare da Kaggle)
+- [x] (P1) Aggiungere `data/raw/test.csv` (scaricare da Kaggle)
 - [ ] (P1) Eseguire `python notebooks/modelling.py` (run completo non FAST)
 - [ ] (P1) Caricare submission su Kaggle e annotare score in `data/processed/submission_log.csv` (timestamp, model, public_score)
 - [ ] (P1) Verificare riproducibilità (seed, FAST_MODE=0) nel log
