@@ -1,0 +1,4 @@
+Outlier handling performed via IQR capping on features: PCIAT-PCIAT_Total, PCIAT-PCIAT_05, PCIAT-PCIAT_03, PCIAT-PCIAT_15, PCIAT-PCIAT_18, PCIAT-PCIAT_17, PCIAT-PCIAT_02, PCIAT-PCIAT_13
+Total outlier instances across selected features (counting duplicates per feature) before capping: 20
+Rows with at least one capped value: 56 (2.05% of dataset)
+Chosen strategy: capping (winsorizing) to retain all rows and reduce influence of extreme values.

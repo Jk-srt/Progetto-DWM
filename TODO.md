@@ -19,12 +19,12 @@ P3 = Nice-to-have / opzionale
 - [ ] (P1) Verificare riproducibilità (seed, FAST_MODE=0) nel log
 
 ### 2. Outlier / Valori irrealistici
-- [ ] (P1) Selezionare 5–10 feature numeriche principali (documentare criterio)
-- [ ] (P1) Calcolare IQR bounds e contare outlier (prima/dopo)
-- [ ] (P1) Decidere strategia (drop o capping) e applicarla
-- [ ] (P1) Salvare `data/processed/outlier_summary.csv`
-- [ ] (P1) Salvare dataset pulito come `data/processed/train_clean_cleaned.csv` (se migliora)
-- [ ] (P1) Annotare nel report % righe rimosse / capped
+- [x] (P1) Selezionare 5–10 feature numeriche principali (documentare criterio) (done 2025-09-02) – mutual information top 8
+- [x] (P1) Calcolare IQR bounds e contare outlier (prima/dopo) (done 2025-09-02) – salvato outlier_summary.csv
+- [x] (P1) Decidere strategia (drop o capping) e applicarla (done 2025-09-02) – scelta capping winsorizing, dataset train_clean_outliers_capped.csv
+- [x] (P1) Salvare `data/processed/outlier_summary.csv` (done 2025-09-02)
+- [x] (P1) Salvare dataset pulito come `data/processed/train_clean_cleaned.csv` (done 2025-09-02)
+- [x] (P1) Annotare nel report % righe rimosse / capped (done 2025-09-02) – 0% righe rimosse, 2.05% righe con almeno un valore capped
 
 ### 3. Baselines & Confronto Modelli
 - [ ] (P1) Eseguire `python notebooks/baselines.py` e generare metriche baseline
