@@ -28,9 +28,31 @@
 - Metriche CV: Accuracy, Macro-F1, ROC-AUC OVR weighted, Average Precision Macro
 
 ### Tuning Iperparametri
-- RF: spazio {n_estimators, max_depth, min_samples_split, min_samples_leaf, max_features}
-- LGBM: spazio {n_estimators, learning_rate, num_leaves, max_depth, subsample, colsample_bytree, reg_lambda}
-- Strategia: RandomizedSearchCV
+Strategia: RandomizedSearchCV (5-fold Stratified) ottimizzando Macro-F1.
+
+RandomForest:
+- Search space:
+	- n_estimators: {200, 400, 800}
+	- max_depth: {None, 10, 20, 40}
+	- min_samples_split: {2, 5, 10}
+	- min_samples_leaf: {1, 2, 4}
+	- max_features: {"sqrt", "log2", None}
+- Iterazioni campionate: 20
+- Best params: n_estimators=400, max_depth=None, min_samples_split=10, min_samples_leaf=4, max_features=sqrt
+
+LightGBM:
+- Search space:
+	- n_estimators: {300, 600, 1000}
+	- learning_rate: {0.05, 0.1, 0.2}
+	- num_leaves: {31, 63, 127}
+	- max_depth: {-1, 6, 12}
+	- subsample: {0.7, 0.9, 1.0}
+	- colsample_bytree: {0.7, 0.9, 1.0}
+	- reg_lambda: {0.0, 0.1, 1.0}
+- Iterazioni campionate: 25
+- Best params: n_estimators=300, learning_rate=0.1, num_leaves=63, max_depth=-1, subsample=0.9, colsample_bytree=0.7, reg_lambda=1.0
+
+Nota: sono stati scelti spazi moderati per coprire ampiezza (profondità/alberi) e regolarizzazione senza esplosione combinatoria; ulteriori raffinamenti (es. tuning fine learning_rate + early stopping) indicati come lavoro futuro.
 
 ## 4. Risultati
 Inserire tabella (CV mean ± std)

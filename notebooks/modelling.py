@@ -416,6 +416,14 @@ def main():
     # Save RF CV metrics early
     with open(DATA_DIR / "metrics_cv_RandomForest.json", 'w', encoding='utf-8') as f:
         json.dump(rf_cv, f, indent=2)
+    # Prepare partial HPO summary structure
+    hpo_summary = {
+        'random_forest': {
+            'search_space': {k: v for k, v in rf_param_dist.items()},
+            'n_iter': rf_search.n_iter,
+            'best_params': rf_search.best_params_,
+        }
+    }
 
     # 2) LightGBM (beyond scikit-learn) + HPO
     lgbm_best = None
@@ -460,8 +468,33 @@ def main():
         print("[LGBM] CV:", lgbm_cv)
         with open(DATA_DIR / "metrics_cv_LightGBM.json", 'w', encoding='utf-8') as f:
             json.dump(lgbm_cv, f, indent=2)
+        # Append LightGBM to HPO summary
+        try:
+            hpo_summary['lightgbm'] = {
+                'search_space': {k: v for k, v in lgbm_param_dist.items()},
+                'n_iter': lgbm_search.n_iter,
+                'best_params': lgbm_search.best_params_,
+            }
+        except Exception:
+            pass
     except Exception as e:
         print("[LGBM] LightGBM non disponibile o saltato:", e)
+    # Persist HPO summary (even if only RF)
+    try:
+        hpo_summary_path = DATA_DIR / 'hpo_summary.json'
+        # Merge if existing
+        if hpo_summary_path.exists():
+            try:
+                existing = json.loads(hpo_summary_path.read_text(encoding='utf-8'))
+                existing.update(hpo_summary)
+                hpo_summary = existing
+            except Exception:
+                pass
+        with open(hpo_summary_path, 'w', encoding='utf-8') as f:
+            json.dump(hpo_summary, f, indent=2)
+        print(f"[HPO] Salvato riassunto HPO in {hpo_summary_path}")
+    except Exception as e:
+        print('[HPO] Errore salvataggio hpo_summary.json:', e)
 
     # Scegli best model per analisi holdout
     def score_from(cv_dict):
